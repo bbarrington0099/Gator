@@ -39,6 +39,11 @@ func main() {
 	commands := command.Commands{}
 	commands.Register("login", command.HandlerLogin)
 	commands.Register("register", command.HandlerRegister)
+	commands.Register("reset", command.HandlerReset)
+	commands.Register("users", command.HandlerUsers)
+	commands.Register("agg", command.HandlerAgg)
+	commands.Register("addfeed", command.HandlerAddFeed)
+	commands.Register("feeds", command.HandlerFeeds)
 
 	if _, ok := commands.ExecutableCommand[os.Args[1]]; !ok {
 		log.Fatalf("unknown command: %s", os.Args[1])
