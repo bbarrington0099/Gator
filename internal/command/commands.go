@@ -45,8 +45,7 @@ func HandlerLogin(s *state.State, cmd Command) (err error) {
 
 	_, err = s.DB.GetUser(context.Background(), username)
 	if err != nil {
-		fmt.Printf("User %s not found\n", username)
-		os.Exit(1)
+		return
 	}
 
 	err = s.Config.SetUser(username)
@@ -87,8 +86,7 @@ func HandlerRegister(s *state.State, cmd Command) (err error) {
 func HandlerReset(s *state.State, cmd Command) (err error) {
 	err = s.DB.DeleteAllUsers(context.Background())
 	if err != nil {
-		fmt.Printf("Error deleting all users: %v\n", err)
-		os.Exit(1)
+		return
 	}
 	fmt.Printf("Deleted all users\n")
 	return
@@ -97,8 +95,7 @@ func HandlerReset(s *state.State, cmd Command) (err error) {
 func HandlerUsers(s *state.State, cmd Command) (err error) {
 	users, err := s.DB.GetUsers(context.Background())
 	if err != nil {
-		fmt.Printf("Error getting users: %v\n", err)
-		os.Exit(1)
+		return
 	}
 
 	for _, user := range users {
@@ -112,19 +109,27 @@ func HandlerUsers(s *state.State, cmd Command) (err error) {
 	return
 }
 
-func HandlerAgg(s *state.State, cmd Command) error {
-	feedURL := "https://www.wagslane.dev/index.xml"
-	
-	ctx := context.Background()
-	feed, err := rss.FetchFeed(ctx, feedURL)
-	if err != nil {
-		return fmt.Errorf("failed to fetch feed: %w", err)
+func HandlerAgg(s *state.State, cmd Command) (err error) {
+	if len(cmd.Args) < 1 {
+		err = fmt.Errorf("missing time between requests")
+		return
 	}
 
-	// Simply print the struct using the default fmt formatting
-	fmt.Printf("%+v\n", *feed)
+	time_between_reqs, err := time.ParseDuration(cmd.Args[0])
+	if err != nil {
+		return
+	}
 
-	return nil
+	fmt.Printf("Collecting feeds every %s\n", time_between_reqs)
+
+	ticker := time.NewTicker(time_between_reqs)
+	defer ticker.Stop()
+	for ; ; <-ticker.C {
+		err = scrapeFeeds(s)
+		if err != nil {
+			return
+		}
+	}
 }
 
 func HandlerAddFeed(s *state.State, cmd Command, user database.User) (err error) {
@@ -261,6 +266,34 @@ func HandlerUnfollow(s *state.State, cmd Command, user database.User) (err error
 	}
 
 	fmt.Printf("%s unfollowed %s\n", user.Name, feed.Name)
+
+	return
+}
+
+// Helper Functions
+
+func scrapeFeeds(s *state.State) (err error) {
+	feed, err := s.DB.GetNextFeedToFetch(context.Background())
+	if err != nil {
+		fmt.Printf("Error getting next feed to fetch: %v\n", err)
+		os.Exit(1)
+	}
+
+	err = s.DB.MarkFeedFetched(context.Background(), feed.ID)
+	if err != nil {
+		fmt.Printf("Error marking feed as fetched: %v\n", err)
+		os.Exit(1)
+	}
+
+	feedData, err := rss.FetchFeed(context.Background(), feed.Url)
+	if err != nil {
+		fmt.Printf("Error fetching feed: %v\n", err)
+		os.Exit(1)
+	}
+
+	for _, item := range feedData.Channel.Item {
+		fmt.Printf("%s\n", item.Title)
+	}
 
 	return
 }
