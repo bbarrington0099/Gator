@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"os"
 	"time"
-	
+
 	"github.com/google/uuid"
 
+	"github.com/bbarrington0099/Gator/internal/RSS"
 	"github.com/bbarrington0099/Gator/internal/database"
 	"github.com/bbarrington0099/Gator/internal/state"
-	"github.com/bbarrington0099/Gator/internal/RSS"
 )
 
 type Commands struct {
@@ -32,6 +32,8 @@ func (c *Commands) Register(name string, f func(*state.State, Command) error) {
 	}
 	c.ExecutableCommand[name] = f
 }
+
+// Command Handlers
 
 func HandlerLogin(s *state.State, cmd Command) (err error) {
 	if len(cmd.Args) == 0 {
@@ -125,7 +127,7 @@ func HandlerAgg(s *state.State, cmd Command) error {
 	return nil
 }
 
-func HandlerAddFeed(s *state.State, cmd Command) (err error) {
+func HandlerAddFeed(s *state.State, cmd Command, user database.User) (err error) {
 	if len(cmd.Args) < 2 {
 		err = fmt.Errorf("missing feed name or URL")
 		return
@@ -134,21 +136,13 @@ func HandlerAddFeed(s *state.State, cmd Command) (err error) {
 	feedName := cmd.Args[0]
 	feedURL := cmd.Args[1]
 
-	currentUser := s.Config.Current_user_name
-	userInfo, err := s.DB.GetUser(context.Background(), currentUser)
-	if err != nil {
-		fmt.Printf("Error getting user ID: %v\n", err)
-		os.Exit(1)
-	}
-	currentUserID := userInfo.ID
-
 	newFeedParams := database.CreateFeedParams{
 		ID:        uuid.New(),
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 		Name:      feedName,
 		Url:       feedURL,
-		UserID:    currentUserID,
+		UserID:    user.ID,
 	}
 
 	context := context.Background()
@@ -159,6 +153,23 @@ func HandlerAddFeed(s *state.State, cmd Command) (err error) {
 	}
 
 	fmt.Printf("%+v\n", newFeed)
+
+	feedFollowParams := database.CreateFeedFollowParams{
+		ID:        uuid.New(),
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+		UserID:    user.ID,
+		FeedID:    newFeed.ID,
+	}
+
+	feedFollow, err := s.DB.CreateFeedFollow(context, feedFollowParams)
+	if err != nil {
+		fmt.Printf("Error creating feed follow: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("%s now follows %s\n", feedFollow.UserName, feedFollow.FeedName)
+
 	return
 }
 
@@ -173,4 +184,99 @@ func HandlerFeeds(s *state.State, cmd Command) (err error) {
 		fmt.Printf("%s created * %s (%s)\n", feed.UserName, feed.Name, feed.Url)
 	}
 	return
+}
+
+func HandlerFollow(s *state.State, cmd Command, user database.User) (err error) {
+	if len(cmd.Args) < 1 {
+		err = fmt.Errorf(("missing url"))
+		return
+	}
+
+	feedURL := cmd.Args[0]
+
+	feed, err := s.DB.GetFeedByURL(context.Background(), feedURL)
+	if err != nil {
+		fmt.Printf("Error getting feed: %v\n", err)
+		os.Exit(1)
+	}
+
+	feedFollowParams := database.CreateFeedFollowParams{
+		ID:        uuid.New(),
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+		UserID:    user.ID,
+		FeedID:    feed.ID,
+	}
+
+	feedFollow, err := s.DB.CreateFeedFollow(context.Background(), feedFollowParams)
+	if err != nil {
+		fmt.Printf("Error creating feed follow: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("%s %s\n", feedFollow.FeedName, feedFollow.UserName)
+
+	return
+}
+
+func HandlerFollowing(s *state.State, cmd Command, user database.User) (err error) {
+	if len(cmd.Args) > 0 {
+		err = fmt.Errorf("too many arguments")
+		return
+	}
+
+	follows, err := s.DB.GetFeedFollowsForUser(context.Background(), user.ID)
+	if err != nil {
+		fmt.Printf("Error getting feed follows: %v\n", err)
+		os.Exit(1)
+	}
+
+	for _, follow := range follows {
+		fmt.Printf("%s %s\n", follow.FeedName, follow.UserName)
+	}
+	return
+}
+
+func HandlerUnfollow(s *state.State, cmd Command, user database.User) (err error) {
+	if len(cmd.Args) < 1 {
+		err = fmt.Errorf("missing url")
+		return
+	}
+
+	feedURL := cmd.Args[0]
+
+	feed, err := s.DB.GetFeedByURL(context.Background(), feedURL)
+	if err != nil {
+		fmt.Printf("Error getting feed: %v\n", err)
+		os.Exit(1)
+	}
+
+	err = s.DB.DeleteFeedFollow(context.Background(), database.DeleteFeedFollowParams{
+		UserID: user.ID,
+		FeedID: feed.ID,
+	})
+	if err != nil {
+		fmt.Printf("Error deleting feed follow: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("%s unfollowed %s\n", user.Name, feed.Name)
+
+	return
+}
+
+// Middleware
+
+func MiddlewareCurrentUser(handler func(s *state.State, cmd Command, user database.User) (err error)) func (s *state.State, cmd Command) (err error) {
+	return func(s *state.State, cmd Command) (err error) {
+		currentUser := s.Config.Current_user_name
+		userInfo, err := s.DB.GetUser(context.Background(), currentUser)
+		if err != nil {
+			fmt.Printf("Error getting user ID: %v\n", err)
+			os.Exit(1)
+		}
+
+		err = handler(s, cmd, userInfo)
+		return
+	}
 }
