@@ -47,6 +47,7 @@ func main() {
 	commands.Register("follow", command.MiddlewareCurrentUser(command.HandlerFollow))
 	commands.Register("following", command.MiddlewareCurrentUser(command.HandlerFollowing))
 	commands.Register("unfollow", command.MiddlewareCurrentUser(command.HandlerUnfollow))
+	commands.Register("browse", command.MiddlewareCurrentUser(command.HandlerBrowse))
 
 	if _, ok := commands.ExecutableCommand[os.Args[1]]; !ok {
 		log.Fatalf("unknown command: %s", os.Args[1])

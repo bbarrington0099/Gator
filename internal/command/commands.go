@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
+	"strconv"
 
 	"github.com/google/uuid"
 
@@ -270,6 +272,36 @@ func HandlerUnfollow(s *state.State, cmd Command, user database.User) (err error
 	return
 }
 
+func HandlerBrowse(s *state.State, cmd Command, user database.User) (err error) {
+	var limit int
+	
+	if len(cmd.Args) < 1 {
+		limit = 2
+	} else {
+		parsedLimit, err := strconv.Atoi(cmd.Args[0])
+		if err != nil {
+			return fmt.Errorf("invalid limit: %v", err)
+		}
+		limit = parsedLimit
+	}
+	
+	userPostsParams := database.GetPostsForUserParams{
+		UserID: user.ID,
+		Limit:  int32(limit),
+	}
+
+	posts, err := s.DB.GetPostsForUser(context.Background(), userPostsParams)
+	if err != nil {
+		return
+	} 
+	
+	for _, post := range posts {
+		fmt.Printf("%s %s\n %s\n", post.FeedName, post.Title, post.Description)
+	}
+
+	return
+}
+
 // Helper Functions
 
 func scrapeFeeds(s *state.State) (err error) {
@@ -292,7 +324,35 @@ func scrapeFeeds(s *state.State) (err error) {
 	}
 
 	for _, item := range feedData.Channel.Item {
-		fmt.Printf("%s\n", item.Title)
+		pubTime, err := time.Parse(time.RFC1123Z, item.PubDate)
+		if err != nil {
+			pubTime, err = time.Parse(time.RFC1123, item.PubDate)
+			if err != nil {
+				fmt.Printf("Error parsing publication date '%s': %v\n", item.PubDate, err)
+				continue
+			}
+		}
+
+		postParams := database.CreatePostParams{
+			ID:          uuid.New(),
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
+			Title:       item.Title,
+			Url:         item.Link,
+			FeedID:      feed.ID,
+			Description: item.Description,
+			PublishedAt: pubTime,
+		}
+
+		_, err = s.DB.CreatePost(context.Background(), postParams)
+		if err != nil {
+			if strings.Contains(err.Error(), "posts_url_key") {
+				fmt.Printf("Post %s already exists\n", item.Link)
+			} else {
+				fmt.Printf("Error creating post: %v\n", err)
+			}
+			continue
+		}
 	}
 
 	return
